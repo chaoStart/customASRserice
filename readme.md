@@ -1,3 +1,4 @@
+--------手动安装----------------
 1、创建和激活虚拟环境
 conda create -n asrservice python=3.10 -y
 
@@ -9,3 +10,7 @@ python download_model.py
 
 4、下载完模型之后执行启动ASR服务，进行音频文件识别
 python app.py
+
+------自动安装-------
+chmod +x start.sh
+./start.sh
