@@ -4,10 +4,59 @@ set -e
 
 ENV_NAME="asrservice"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SERVICE_NAME="asr-service"
+SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
 
 echo "=========================================="
 echo "          ASR Service 启动脚本"
 echo "=========================================="
+
+# ──────────────────────────────────────────────
+# 注册开机自启动（systemd）
+# ──────────────────────────────────────────────
+setup_autostart() {
+    echo "[信息] 正在配置开机自启动..."
+
+    # 查找 conda 安装路径
+    if [ -f "$HOME/miniconda3/etc/profile.d/conda.sh" ]; then
+        CONDA_PROFILE="$HOME/miniconda3/etc/profile.d/conda.sh"
+    elif [ -f "$HOME/anaconda3/etc/profile.d/conda.sh" ]; then
+        CONDA_PROFILE="$HOME/anaconda3/etc/profile.d/conda.sh"
+    else
+        CONDA_PROFILE=""
+    fi
+
+    sudo tee "$SERVICE_FILE" > /dev/null <<EOF
+[Unit]
+Description=ASR Service
+After=network.target
+
+[Service]
+Type=simple
+User=$(whoami)
+WorkingDirectory=${SCRIPT_DIR}
+ExecStart=/bin/bash ${SCRIPT_DIR}/start.sh
+Restart=on-failure
+RestartSec=10
+Environment="HOME=${HOME}"
+Environment="PATH=${HOME}/miniconda3/bin:${HOME}/anaconda3/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    sudo systemctl daemon-reload
+    sudo systemctl enable "$SERVICE_NAME"
+    echo "[完成] 已注册为系统服务，开机后将自动启动"
+    echo "       查看服务状态: sudo systemctl status ${SERVICE_NAME}"
+    echo "       手动停止服务: sudo systemctl stop ${SERVICE_NAME}"
+}
+
+if [ -f "$SERVICE_FILE" ]; then
+    echo "[信息] 开机自启动已配置，跳过注册"
+else
+    setup_autostart
+fi
 
 # 检查并安装 ffmpeg
 if command -v ffmpeg &>/dev/null; then
