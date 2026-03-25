@@ -6,25 +6,135 @@ ENV_NAME="asrservice"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SERVICE_NAME="asr-service"
 SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
+CONFIG_FILE="$SCRIPT_DIR/.asr_config"
 
 echo "=========================================="
 echo "          ASR Service 启动脚本"
 echo "=========================================="
 
 # ──────────────────────────────────────────────
+# 选择 GPU 设备
+# ──────────────────────────────────────────────
+select_gpu() {
+    echo ""
+    echo "[GPU] 正在检测可用显卡..."
+
+    if ! command -v nvidia-smi &>/dev/null; then
+        echo "[警告] 未检测到 nvidia-smi，将使用 CPU 运行"
+        CUDA_DEVICE_INDEX="cpu"
+        return
+    fi
+
+    # 获取 GPU 列表：序号, 名称, 显存总量(MB), 显存空闲(MB)
+    mapfile -t GPU_LIST < <(nvidia-smi --query-gpu=index,name,memory.total,memory.free \
+        --format=csv,noheader,nounits 2>/dev/null)
+
+    if [ ${#GPU_LIST[@]} -eq 0 ]; then
+        echo "[警告] 未找到可用 GPU，将使用 CPU 运行"
+        CUDA_DEVICE_INDEX="cpu"
+        return
+    fi
+
+    echo ""
+    echo "  检测到以下显卡："
+    echo "  ┌──────┬────────────────────────────────────┬─────────────┬─────────────┐"
+    echo "  │ 序号 │ 显卡名称                           │ 显存总量    │ 空闲显存    │"
+    echo "  ├──────┼────────────────────────────────────┼─────────────┼─────────────┤"
+    for entry in "${GPU_LIST[@]}"; do
+        IFS=',' read -r idx name total free <<< "$entry"
+        idx="${idx// /}"
+        name="${name## }"
+        total="${total// /}"
+        free="${free// /}"
+        printf "  │  %-4s│ %-34s │ %7s MB  │ %7s MB  │\n" "$idx" "$name" "$total" "$free"
+    done
+    echo "  └──────┴────────────────────────────────────┴─────────────┴─────────────┘"
+    echo ""
+
+    while true; do
+        read -r -p "  请输入要使用的显卡序号（如 0、1、2）: " INPUT_IDX
+        # 验证输入是否为有效序号
+        VALID=false
+        for entry in "${GPU_LIST[@]}"; do
+            IDX=$(echo "$entry" | cut -d',' -f1 | tr -d ' ')
+            if [ "$INPUT_IDX" = "$IDX" ]; then
+                VALID=true
+                break
+            fi
+        done
+        if $VALID; then
+            CUDA_DEVICE_INDEX="$INPUT_IDX"
+            echo "  [确认] 已选择显卡序号: $CUDA_DEVICE_INDEX"
+            break
+        else
+            echo "  [错误] 无效序号，请从列表中选择"
+        fi
+    done
+}
+
+# ──────────────────────────────────────────────
+# 输入显存利用率
+# ──────────────────────────────────────────────
+input_memory_fraction() {
+    echo ""
+    echo "[GPU] 设置显存利用率上限 CUDA_MEMORY_FRACTION（范围 0~1，如 0.7 表示使用 70% 显存）"
+    while true; do
+        read -r -p "  请输入显存利用率（0~1）: " INPUT_FRAC
+        # 校验：整数或小数，且 0 < value <= 1
+        if [[ "$INPUT_FRAC" =~ ^(0(\.[0-9]+)?|1(\.0+)?)$ ]]; then
+            if (( $(echo "$INPUT_FRAC > 0" | bc -l) )) && \
+               (( $(echo "$INPUT_FRAC <= 1" | bc -l) )); then
+                CUDA_MEMORY_FRACTION="$INPUT_FRAC"
+                echo "  [确认] 显存利用率设置为: $CUDA_MEMORY_FRACTION"
+                break
+            fi
+        fi
+        echo "  [错误] 请输入 0~1 之间的数值，如 0.7"
+    done
+}
+
+# ──────────────────────────────────────────────
+# 加载或创建配置文件
+# ──────────────────────────────────────────────
+CUDA_DEVICE_INDEX=""
+CUDA_MEMORY_FRACTION=""
+
+if [ -f "$CONFIG_FILE" ]; then
+    source "$CONFIG_FILE"
+    echo ""
+    echo "[配置] 已加载上次配置："
+    echo "       CUDA_DEVICE_INDEX    = $CUDA_DEVICE_INDEX"
+    echo "       CUDA_MEMORY_FRACTION = $CUDA_MEMORY_FRACTION"
+    echo ""
+    read -r -p "       是否重新配置显卡参数？[y/N] " RECONFIG
+    if [[ "$RECONFIG" =~ ^[Yy]$ ]]; then
+        select_gpu
+        input_memory_fraction
+        # 保存新配置
+        cat > "$CONFIG_FILE" <<EOF
+CUDA_DEVICE_INDEX=$CUDA_DEVICE_INDEX
+CUDA_MEMORY_FRACTION=$CUDA_MEMORY_FRACTION
+EOF
+        echo "[配置] 新配置已保存到 $CONFIG_FILE"
+    fi
+else
+    # 首次运行，交互选择
+    select_gpu
+    input_memory_fraction
+    cat > "$CONFIG_FILE" <<EOF
+CUDA_DEVICE_INDEX=$CUDA_DEVICE_INDEX
+CUDA_MEMORY_FRACTION=$CUDA_MEMORY_FRACTION
+EOF
+    echo "[配置] 配置已保存到 $CONFIG_FILE"
+fi
+
+echo ""
+
+# ──────────────────────────────────────────────
 # 注册开机自启动（systemd）
 # ──────────────────────────────────────────────
 setup_autostart() {
     echo "[信息] 正在配置开机自启动..."
-
-    # 查找 conda 安装路径
-    if [ -f "$HOME/miniconda3/etc/profile.d/conda.sh" ]; then
-        CONDA_PROFILE="$HOME/miniconda3/etc/profile.d/conda.sh"
-    elif [ -f "$HOME/anaconda3/etc/profile.d/conda.sh" ]; then
-        CONDA_PROFILE="$HOME/anaconda3/etc/profile.d/conda.sh"
-    else
-        CONDA_PROFILE=""
-    fi
 
     sudo tee "$SERVICE_FILE" > /dev/null <<EOF
 [Unit]
@@ -58,7 +168,9 @@ else
     setup_autostart
 fi
 
+# ──────────────────────────────────────────────
 # 检查并安装 ffmpeg
+# ──────────────────────────────────────────────
 if command -v ffmpeg &>/dev/null; then
     echo "[信息] ffmpeg 已安装，跳过"
 else
@@ -67,7 +179,9 @@ else
     echo "[完成] ffmpeg 安装完成"
 fi
 
+# ──────────────────────────────────────────────
 # 初始化 conda
+# ──────────────────────────────────────────────
 if command -v conda &>/dev/null; then
     eval "$(conda shell.bash hook)"
 elif [ -f "$HOME/miniconda3/etc/profile.d/conda.sh" ]; then
@@ -109,9 +223,15 @@ else
     echo "[完成] 模型下载完成"
 fi
 
+# ──────────────────────────────────────────────
 # 启动服务
+# ──────────────────────────────────────────────
 echo ""
 echo "=========================================="
 echo "  正在启动 ASR 服务..."
+echo "  CUDA_DEVICE_INDEX    = $CUDA_DEVICE_INDEX"
+echo "  CUDA_MEMORY_FRACTION = $CUDA_MEMORY_FRACTION"
 echo "=========================================="
+CUDA_DEVICE_INDEX="$CUDA_DEVICE_INDEX" \
+CUDA_MEMORY_FRACTION="$CUDA_MEMORY_FRACTION" \
 python app.py

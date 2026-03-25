@@ -1,4 +1,5 @@
 
+import os
 import threading
 import torch
 from funasr import AutoModel
@@ -7,8 +8,9 @@ class ASRService:
     def __init__(self, model_local_path):
         self.model_dir = "FunAudioLLM/Fun-ASR-Nano-2512"
         self._lock = threading.Lock()  # 保证单实例线程安全
+        device_index = int(os.getenv("CUDA_DEVICE_INDEX", "0"))
         self.device = (
-            "cuda:0"
+            f"cuda:{device_index}"
             if torch.cuda.is_available()
             else "mps"
             if torch.backends.mps.is_available()
