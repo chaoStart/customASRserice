@@ -8,14 +8,14 @@ class ASRService:
     def __init__(self, model_local_path):
         self.model_dir = "FunAudioLLM/Fun-ASR-Nano-2512"
         self._lock = threading.Lock()  # 保证单实例线程安全
-        device_index = int(os.getenv("CUDA_DEVICE_INDEX", "0"))
-        self.device = (
-            f"cuda:{device_index}"
-            if torch.cuda.is_available()
-            else "mps"
-            if torch.backends.mps.is_available()
-            else "cpu"
-        )
+        cuda_env = os.getenv("CUDA_DEVICE_INDEX", "0")
+        if cuda_env == "cpu" or not torch.cuda.is_available():
+            if torch.backends.mps.is_available():
+                self.device = "mps"
+            else:
+                self.device = "cpu"
+        else:
+            self.device = f"cuda:{int(cuda_env)}"
 
         print("ASR device:", self.device)
 
