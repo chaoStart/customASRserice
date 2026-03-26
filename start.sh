@@ -1,5 +1,11 @@
 #!/bin/bash
 
+# 自动修复 Windows CRLF 换行符，修复后重新执行
+if cat "$0" | grep -qP '\r'; then
+    sed -i 's/\r//' "$0"
+    exec bash "$0" "$@"
+fi
+
 set -e
 
 ENV_NAME="asrservice"
@@ -80,14 +86,11 @@ input_memory_fraction() {
     echo "[GPU] 设置显存利用率上限 CUDA_MEMORY_FRACTION（范围 0~1，如 0.7 表示使用 70% 显存）"
     while true; do
         read -r -p "  请输入显存利用率（0~1）: " INPUT_FRAC
-        # 校验：整数或小数，且 0 < value <= 1
-        if [[ "$INPUT_FRAC" =~ ^(0(\.[0-9]+)?|1(\.0+)?)$ ]]; then
-            if (( $(echo "$INPUT_FRAC > 0" | bc -l) )) && \
-               (( $(echo "$INPUT_FRAC <= 1" | bc -l) )); then
-                CUDA_MEMORY_FRACTION="$INPUT_FRAC"
-                echo "  [确认] 显存利用率设置为: $CUDA_MEMORY_FRACTION"
-                break
-            fi
+        # 用 awk 校验：是合法数字 且 0 < value <= 1
+        if awk -v v="$INPUT_FRAC" 'BEGIN{ exit !(v == v+0 && v > 0 && v <= 1) }' 2>/dev/null; then
+            CUDA_MEMORY_FRACTION="$INPUT_FRAC"
+            echo "  [确认] 显存利用率设置为: $CUDA_MEMORY_FRACTION"
+            break
         fi
         echo "  [错误] 请输入 0~1 之间的数值，如 0.7"
     done
@@ -109,7 +112,7 @@ if [ -f "$CONFIG_FILE" ]; then
     read -r -p "       是否重新配置显卡参数？[y/N] " RECONFIG
     if [[ "$RECONFIG" =~ ^[Yy]$ ]]; then
         select_gpu
-        input_memory_fraction
+        [[ "$CUDA_DEVICE_INDEX" != "cpu" ]] && input_memory_fraction || CUDA_MEMORY_FRACTION=""
         # 保存新配置
         cat > "$CONFIG_FILE" <<EOF
 CUDA_DEVICE_INDEX=$CUDA_DEVICE_INDEX
@@ -120,7 +123,7 @@ EOF
 else
     # 首次运行，交互选择
     select_gpu
-    input_memory_fraction
+    [[ "$CUDA_DEVICE_INDEX" != "cpu" ]] && input_memory_fraction || CUDA_MEMORY_FRACTION=""
     cat > "$CONFIG_FILE" <<EOF
 CUDA_DEVICE_INDEX=$CUDA_DEVICE_INDEX
 CUDA_MEMORY_FRACTION=$CUDA_MEMORY_FRACTION
@@ -136,7 +139,14 @@ echo ""
 setup_autostart() {
     echo "[信息] 正在配置开机自启动..."
 
-    sudo tee "$SERVICE_FILE" > /dev/null <<EOF
+    # root 用户直接执行，非 root 用户使用 sudo
+    if [ "$EUID" -eq 0 ]; then
+        SUDO=""
+    else
+        SUDO="sudo"
+    fi
+
+    tee "$SERVICE_FILE" > /dev/null <<EOF
 [Unit]
 Description=ASR Service
 After=network.target
@@ -155,14 +165,16 @@ Environment="PATH=${HOME}/miniconda3/bin:${HOME}/anaconda3/bin:/usr/local/sbin:/
 WantedBy=multi-user.target
 EOF
 
-    sudo systemctl daemon-reload
-    sudo systemctl enable "$SERVICE_NAME"
+    $SUDO systemctl daemon-reload
+    $SUDO systemctl enable "$SERVICE_NAME"
     echo "[完成] 已注册为系统服务，开机后将自动启动"
-    echo "       查看服务状态: sudo systemctl status ${SERVICE_NAME}"
-    echo "       手动停止服务: sudo systemctl stop ${SERVICE_NAME}"
+    echo "       查看服务状态: ${SUDO:+sudo }systemctl status ${SERVICE_NAME}"
+    echo "       手动停止服务: ${SUDO:+sudo }systemctl stop ${SERVICE_NAME}"
 }
 
-if [ -f "$SERVICE_FILE" ]; then
+if ! systemctl is-system-running &>/dev/null && ! systemctl status &>/dev/null 2>&1; then
+    echo "[警告] 当前环境不支持 systemd（如 Docker/容器），跳过开机自启动配置"
+elif [ -f "$SERVICE_FILE" ]; then
     echo "[信息] 开机自启动已配置，跳过注册"
 else
     setup_autostart
@@ -175,7 +187,11 @@ if command -v ffmpeg &>/dev/null; then
     echo "[信息] ffmpeg 已安装，跳过"
 else
     echo "[信息] 未检测到 ffmpeg，正在安装..."
-    sudo apt update && sudo apt install ffmpeg -y
+    if [ "$EUID" -eq 0 ]; then
+        apt update && apt install ffmpeg -y
+    else
+        sudo apt update && sudo apt install ffmpeg -y
+    fi
     echo "[完成] ffmpeg 安装完成"
 fi
 
