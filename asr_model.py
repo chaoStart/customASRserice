@@ -8,6 +8,7 @@ class ASRService:
     def __init__(self, model_local_path):
         self.model_dir = "FunAudioLLM/Fun-ASR-Nano-2512"
         self._lock = threading.Lock()  # 保证单实例线程安全
+        # 判断是否有显卡
         cuda_env = os.getenv("CUDA_DEVICE_INDEX", "0")
         if cuda_env == "cpu" or not torch.cuda.is_available():
             if torch.backends.mps.is_available():
@@ -18,6 +19,14 @@ class ASRService:
             self.device = f"cuda:{int(cuda_env)}"
 
         print("ASR device:", self.device)
+
+        # 设置GPU利用率
+        cuda_mem_fraction = os.environ.get("CUDA_MEMORY_FRACTION")
+        if cuda_mem_fraction:
+            fraction = float(cuda_mem_fraction)
+            if torch.cuda.is_available() and 0 < fraction <= 1.0:
+                torch.cuda.set_per_process_memory_fraction(fraction)
+            print(f"GPU 显存利用率上限:{fraction * 100:.0f}%")
 
         self.model = AutoModel(
             model=self.model_dir,
