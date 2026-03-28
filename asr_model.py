@@ -39,8 +39,9 @@ class ASRService:
         )
 
     def convert_wav_text(self, wav_path: str, batch_size=1, hotwords=None, language="中文") -> str:
+        # Hotword 的核心作用是解决通用语音模型在特定领域或场景下，对专业术语、人名、品牌名等低频但重要的词汇识别不准的问题。
         if hotwords is None:
-            hotwords = ["天气"]
+            hotwords = ["开放时间"]
         with self._lock:  # 防止同一实例被并发调用
             res = self.model.generate(
                 input=[wav_path],
