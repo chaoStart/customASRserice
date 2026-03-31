@@ -6,14 +6,14 @@ import asyncio
 import aiohttp
 import time
 import os
-from pathlib import Path
+import sys
 
 # ──────────────────────────────────────────────
 # 配置
 # ──────────────────────────────────────────────
 SERVER_URL = "http://localhost:8000/asr/wav_to_text_binary"
 CONCURRENT_REQUESTS = 10  # 并发请求数
-TEST_WAV_PATH = r"D:\github_code\customASRserice\test_audio.wav"  # 测试音频路径
+TEST_WAV_PATH = r"D:\github_code\customASRserice\weather_nice_male.wav"  # 测试音频路径
 
 
 async def send_request(session: aiohttp.ClientSession, request_id: int) -> dict:
@@ -34,10 +34,19 @@ async def send_request(session: aiohttp.ClientSession, request_id: int) -> dict:
         with open(TEST_WAV_PATH, "rb") as f:
             wav_data = f.read()
         
+        # 构建 multipart/form-data 请求（FastAPI UploadFile 格式）
+        form_data = aiohttp.FormData()
+        form_data.add_field(
+            "file",
+            wav_data,
+            filename="weather_nice_male.wav",
+            content_type="audio/wav"
+        )
+        
         # 发送请求
         async with session.post(
             SERVER_URL,
-            data={"file": ("test.wav", wav_data, "audio/wav")},
+            data=form_data,
             timeout=aiohttp.ClientTimeout(total=120)
         ) as response:
             end_time = time.time()
@@ -91,7 +100,7 @@ async def run_concurrent_test():
     # 检查测试文件
     if not os.path.exists(TEST_WAV_PATH):
         print(f"\n❌ 错误：测试文件不存在：{TEST_WAV_PATH}")
-        print("\n💡 提示：请准备一个测试用的 WAV 文件，或修改脚本中的 TEST_WAV_PATH")
+        print("\n💡 提示：请确认文件路径是否正确")
         return
     
     # 获取文件大小
@@ -165,44 +174,6 @@ async def run_concurrent_test():
         print("   ⚠️  部分请求失败，请检查服务状态")
 
 
-def create_test_audio():
-    """创建一个简单的测试 WAV 文件（静音）"""
-    import wave
-    import struct
-    
-    test_path = Path(TEST_WAV_PATH)
-    print(f"正在创建测试音频文件：{test_path}")
-    
-    # 创建 2 秒的静音 WAV 文件
-    sample_rate = 16000
-    duration = 2  # 秒
-    num_samples = sample_rate * duration
-    
-    with wave.open(str(test_path), "w") as wav_file:
-        wav_file.setnchannels(1)  # 单声道
-        wav_file.setsampwidth(2)  # 16 位
-        wav_file.setframerate(sample_rate)
-        
-        # 写入静音数据
-        for _ in range(num_samples):
-            wav_file.writeframes(struct.pack("<h", 0))  # 静音
-    
-    print(f"✅ 测试音频文件已创建：{test_path}")
-    return str(test_path)
-
-
 if __name__ == "__main__":
-    import sys
-    
-    # 如果测试文件不存在，询问是否创建
-    if not os.path.exists(TEST_WAV_PATH):
-        print(f"⚠️  测试文件不存在：{TEST_WAV_PATH}")
-        choice = input("是否创建一个 2 秒的静音测试文件？(y/n): ").strip().lower()
-        if choice == "y":
-            create_test_audio()
-        else:
-            print("❌ 请准备一个测试 WAV 文件后重试")
-            sys.exit(1)
-    
     # 运行测试
     asyncio.run(run_concurrent_test())
