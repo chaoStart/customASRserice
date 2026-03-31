@@ -1,14 +1,16 @@
-
 import os
 import threading
 import torch
+from typing import List
 from funasr import AutoModel
 from funasr.models.fun_asr_nano.model import FunASRNano
+
+
 class ASRService:
     def __init__(self, model_local_path):
         self.model_dir = "FunAudioLLM/Fun-ASR-Nano-2512"
-        self._lock = threading.Lock()  # 保证单实例线程安全
-        # 判断是否有显卡
+        self._lock = threading.Lock()
+        
         cuda_env = os.getenv("CUDA_DEVICE_INDEX", "0")
         if cuda_env == "cpu" or not torch.cuda.is_available():
             if torch.backends.mps.is_available():
@@ -20,7 +22,6 @@ class ASRService:
 
         print("ASR device:", self.device)
 
-        # 设置GPU利用率
         cuda_mem_fraction = os.environ.get("CUDA_MEMORY_FRACTION")
         if cuda_mem_fraction:
             fraction = float(cuda_mem_fraction)
@@ -39,10 +40,10 @@ class ASRService:
         )
 
     def convert_wav_text(self, wav_path: str, batch_size=1, hotwords=None, language="中文") -> str:
-        # Hotword 的核心作用是解决通用语音模型在特定领域或场景下，对专业术语、人名、品牌名等低频但重要的词汇识别不准的问题。
+        """单文件推理（兼容旧接口）"""
         if hotwords is None:
             hotwords = ["开放时间"]
-        with self._lock:  # 防止同一实例被并发调用
+        with self._lock:
             res = self.model.generate(
                 input=[wav_path],
                 cache={},
@@ -52,3 +53,23 @@ class ASRService:
                 itn=True,
             )
         return res[0]["text"]
+
+    def convert_wav_text_batch(self, wav_paths: List[str], hotwords=None, language="中文") -> List[str]:
+        """
+        批处理多个音频文件，提升 GPU 利用率
+        返回：每个音频的识别结果列表
+        """
+        if hotwords is None:
+            hotwords = ["开放时间"]
+        
+        with self._lock:
+            res = self.model.generate(
+                input=wav_paths,
+                cache={},
+                batch_size=len(wav_paths),
+                hotwords=hotwords,
+                language=language,
+                itn=True,
+            )
+        
+        return [item["text"] for item in res]
