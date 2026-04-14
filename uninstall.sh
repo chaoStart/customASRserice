@@ -1,7 +1,8 @@
 #!/bin/bash
 
 set -e
-
+# 根据star_xxx_asr.sh文件中的实际虚拟环境名称，进行删除和卸载
+#ENV_NAME="asrservice"
 ENV_NAME="asrservice"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SERVICE_NAME="asr-service"

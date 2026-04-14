@@ -155,7 +155,7 @@ After=network.target
 Type=simple
 User=$(whoami)
 WorkingDirectory=${SCRIPT_DIR}
-ExecStart=/bin/bash ${SCRIPT_DIR}/start.sh
+ExecStart=/bin/bash ${SCRIPT_DIR}/start_nano2512_asr.sh
 Restart=on-failure
 RestartSec=10
 Environment="HOME=${HOME}"
